@@ -1,119 +1,151 @@
-﻿using CoffeeNChillExample.Models;
-using CoffeeNChillExample.Services;
+using Azure;
+using CoffeeNChill.Models;
+using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
 using System.Net;
-using System.Text;
 using System.Text.Json;
 
-
-namespace CoffeeNChillExample.Functions
+namespace CoffeeNChill.Functions
 {
     public class QueueOrder
     {
         private readonly ILogger<QueueOrder> _logger;
         private readonly QueueService _queueService;
 
-        public QueueOrder(ILogger<QueueOrder> logger)
+        public QueueOrder(
+            ILogger<QueueOrder> logger,
+            QueueService queueService)
         {
             _logger = logger;
-
-            string connectionString =
-                Environment.GetEnvironmentVariable("AzureWebJobsStorage")
-                ?? "UseDevelopmentStorage=true";
-
-            _queueService = new QueueService(
-                connectionString, "order-processing-queue");
+            _queueService = queueService;
         }
 
         [Function("QueueOrder")]
         public async Task<HttpResponseData> Run(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "post",
-                Route = "orders/queue")] HttpRequestData req)
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "orders/queue")]
+            HttpRequestData req)
         {
-            Order? order;
+            _logger.LogInformation("Queueing a new order.");
 
             try
             {
-                order = await JsonSerializer.DeserializeAsync<Order>(
-                    req.Body,
-                    new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
-            }
-            catch (JsonException)
-            {
-                var badJson = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badJson.WriteStringAsync("Invalid JSON request.");
-                return badJson;
-            }
+                var order =
+                    await JsonSerializer.DeserializeAsync<OrderQueueMessage>(req.Body);
 
-            if (order == null ||
-                string.IsNullOrWhiteSpace(order.OrderId) ||
-                string.IsNullOrWhiteSpace(order.CustomerName) ||
-                order.SelectedItemSKUs == null ||
-                order.SelectedItemSKUs.Count == 0 ||
-                order.SelectedItemSKUs.Any(
-                    sku => string.IsNullOrWhiteSpace(sku)) ||
-                order.TotalPrice <= 0 ||
-                double.IsNaN(order.TotalPrice) ||
-                double.IsInfinity(order.TotalPrice))
-            {
-                var badRequest = req.CreateResponse(
-                    HttpStatusCode.BadRequest);
+                if (order == null)
+                {
+                    var errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await errorResponse.WriteStringAsync("Please enter a valid order.");
+                    return errorResponse;
+                }
 
-                await badRequest.WriteStringAsync(
-                    "Provide a valid OrderId, CustomerName, item SKU list and positive TotalPrice.");
+                string? validationError = ValidateOrder(order);
 
-                return badRequest;
-            }
+                if (validationError != null)
+                {
+                    var errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await errorResponse.WriteStringAsync(validationError);
+                    return errorResponse;
+                }
 
-            if (order.OrderTimestamp == default)
-            {
-                order.OrderTimestamp = DateTime.UtcNow;
-            }
+                if (string.IsNullOrWhiteSpace(order.OrderId))
+                {
+                    order.OrderId =
+                        $"ORD-{DateTime.UtcNow:yyyy}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}";
+                }
 
-            try
-            {
-                await _queueService.SendMessageAsync(order);
+                order.OrderId = order.OrderId.Trim();
+                order.CustomerName = order.CustomerName.Trim();
+                order.SelectedItemSKUs = order.SelectedItemSKUs.Select(sku => sku.Trim()).ToList();
 
-                _logger.LogInformation(
-                    "Order {OrderId} added to order-processing-queue.",
-                    order.OrderId);
+                if (order.OrderTimestamp == default)
+                {
+                    order.OrderTimestamp = DateTime.UtcNow;
+                }
+                else if (order.OrderTimestamp.Kind == DateTimeKind.Unspecified)
+                {
+                    order.OrderTimestamp = DateTime.SpecifyKind(order.OrderTimestamp, DateTimeKind.Utc);
+                }
+                else
+                {
+                    order.OrderTimestamp = order.OrderTimestamp.ToUniversalTime();
+                }
+
+                await _queueService.EnqueueMessageAsync(order);
+
+                _logger.LogInformation("Order {orderId} was placed on the order queue.", order.OrderId);
 
                 var response = req.CreateResponse(HttpStatusCode.Accepted);
-                response.Headers.Add("Content-Type", "application/json");
 
-                await response.WriteStringAsync(
-                    JsonSerializer.Serialize(new
-                    {
-                        message = "Order accepted for processing.",
-                        orderId = order.OrderId,
-                        status = "Queued"
-                    }));
+                await response.WriteAsJsonAsync(order);
 
                 return response;
             }
-            catch (Exception ex)
+            catch (JsonException)
             {
-                _logger.LogError(ex,
-                    "Failed to queue order {OrderId}.", order.OrderId);
+                var response = req.CreateResponse(HttpStatusCode.BadRequest);
 
-                var error = req.CreateResponse(
+                await response.WriteStringAsync("The order must be sent as valid JSON.");
+
+                return response;
+            }
+            catch (Exception e) when (e is RequestFailedException || e is AggregateException)
+            {
+                _logger.LogError(e, "Error connecting to the order queue.");
+
+                var response = req.CreateResponse(
+                    HttpStatusCode.ServiceUnavailable);
+
+                await response.WriteStringAsync(
+                    "The order queue is currently unavailable. Please try again shortly.");
+
+                return response;
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Error queueing order.");
+
+                var response = req.CreateResponse(
                     HttpStatusCode.InternalServerError);
 
-                await error.WriteStringAsync(
-                    "The order could not be added to the queue.");
+                await response.WriteStringAsync(
+                    "An error occurred while queueing the order.");
 
-                return error;
+                return response;
             }
+        }
+
+        private static string? ValidateOrder(OrderQueueMessage order)
+        {
+            if (string.IsNullOrWhiteSpace(order.CustomerName))
+            {
+                return "Customer name is required.";
+            }
+
+            if (order.SelectedItemSKUs == null || order.SelectedItemSKUs.Count == 0)
+            {
+                return "At least one item SKU is required.";
+            }
+
+            if (order.SelectedItemSKUs.Any(sku => string.IsNullOrWhiteSpace(sku)))
+            {
+                return "Item SKUs cannot be empty.";
+            }
+
+            if (order.TotalPrice <= 0)
+            {
+                return "Total price must be greater than zero.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(order.OrderId) &&
+                order.OrderId.IndexOfAny(new[] { '/', '\\', '#', '?' }) >= 0)
+            {
+                return "Order ID cannot contain the characters / \\ # ?";
+            }
+
+            return null;
         }
     }
 }
-
-
-

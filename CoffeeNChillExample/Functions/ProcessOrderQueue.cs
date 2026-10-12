@@ -1,122 +1,78 @@
-﻿using Azure.Data.Tables;
-using CoffeeNChillExample.Models;
-using System;
-using System.Collections.Generic;
-using System.Text;
-using CoffeeNChillExample.Services;
+using Azure.Storage.Queues.Models;
+using CoffeeNChill.Models;
+using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
-
-namespace CoffeeNChillExample.Functions
+namespace CoffeeNChill.Functions
 {
     public class ProcessOrderQueue
     {
         private readonly ILogger<ProcessOrderQueue> _logger;
-        private readonly OrderTableService _tableService;
+        private readonly OrderService _orderService;
 
         public ProcessOrderQueue(
-            ILogger<ProcessOrderQueue> logger)
+            ILogger<ProcessOrderQueue> logger,
+            OrderService orderService)
         {
             _logger = logger;
-
-            string connectionString =
-                Environment.GetEnvironmentVariable("AzureWebJobsStorage")
-                ?? "UseDevelopmentStorage=true";
-
-            _tableService = new OrderTableService(connectionString);
+            _orderService = orderService;
         }
 
         [Function("ProcessOrderQueue")]
         public async Task Run(
-            [QueueTrigger("order-processing-queue",
-                Connection = "AzureWebJobsStorage")] string message)
+            [QueueTrigger("order-processing-queue")] QueueMessage message)
         {
-            Order? order;
+            _logger.LogInformation(
+                "Processing order message {messageId} (attempt {dequeueCount}).",
+                message.MessageId,
+                message.DequeueCount);
 
             try
             {
-                order = JsonSerializer.Deserialize<Order>(
-                    message,
-                    new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogError(ex,
-                    "Invalid JSON received in the order queue.");
-                throw;
-            }
+                var queuedOrder =
+                    JsonSerializer.Deserialize<OrderQueueMessage>(message.Body);
 
-            if (order == null ||
-                string.IsNullOrWhiteSpace(order.OrderId) ||
-                string.IsNullOrWhiteSpace(order.CustomerName) ||
-                order.SelectedItemSKUs == null ||
-                order.SelectedItemSKUs.Count == 0 ||
-                order.TotalPrice <= 0)
-            {
-                _logger.LogError(
-                    "Invalid order message received. Message will be retried.");
-                throw new InvalidOperationException(
-                    "Invalid order message.");
-            }
-
-            DateTime timestamp = order.OrderTimestamp == default
-                ? DateTime.UtcNow
-                : order.OrderTimestamp;
-
-            string orderDate = timestamp.ToUniversalTime()
-                .ToString("yyyy-MM-dd");
-
-            OrderTableEntity tableOrder = new OrderTableEntity
-            {
-                PartitionKey = orderDate,
-                RowKey = order.OrderId,
-                CustomerName = order.CustomerName,
-                SelectedItemSKUs = JsonSerializer.Serialize(
-                    order.SelectedItemSKUs),
-                TotalPrice = order.TotalPrice,
-                OrderTimestamp = timestamp,
-                Status = "Received"
-            };
-
-            try
-            {
-                await _tableService.AddOrderAsync(tableOrder);
-
-                _logger.LogInformation(
-                    "Order {OrderId} recorded with status Received.",
-                    order.OrderId);
-
-                string[] statuses =
+                if (queuedOrder == null || string.IsNullOrWhiteSpace(queuedOrder.OrderId))
                 {
-                    "Preparing",
-                    "Ready",
-                    "Collected"
+                    throw new InvalidOperationException(
+                        "The order message is empty or is missing an OrderId.");
+                }
+
+                DateTime orderTimestamp = queuedOrder.OrderTimestamp == default
+                    ? DateTime.UtcNow
+                    : DateTime.SpecifyKind(queuedOrder.OrderTimestamp, DateTimeKind.Utc);
+
+                var newOrder = new OrderEntity
+                {
+                    PartitionKey = orderTimestamp.ToString("yyyy-MM-dd"),
+                    RowKey = queuedOrder.OrderId,
+                    CustomerName = queuedOrder.CustomerName,
+                    SelectedItemSKUs = string.Join(",", queuedOrder.SelectedItemSKUs),
+                    TotalPrice = queuedOrder.TotalPrice,
+                    OrderTimestamp = new DateTimeOffset(orderTimestamp),
+                    Status = "Received",
+                    StatusUpdatedAt = DateTimeOffset.UtcNow
                 };
 
-                foreach (string status in statuses)
-                {
-                    tableOrder.Status = status;
+                await _orderService.AddOrderAsync(newOrder);
 
-                    await _tableService.UpdateOrderAsync(tableOrder);
-
-                    _logger.LogInformation(
-                        "Order {OrderId} status changed to {Status}.",
-                        order.OrderId, status);
-                }
+                _logger.LogInformation(
+                    "Order {orderId} was logged with status {status}.",
+                    newOrder.RowKey,
+                    newOrder.Status);
             }
-            catch (Exception ex)
+            catch (Exception e)
             {
-                _logger.LogError(ex,
-                    "Failed processing order {OrderId}.", order.OrderId);
+                _logger.LogError(
+                    e,
+                    "Error processing order message {messageId} on attempt {dequeueCount}.",
+                    message.MessageId,
+                    message.DequeueCount);
+
                 throw;
             }
         }
     }
 }
-        
-    

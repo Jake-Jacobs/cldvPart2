@@ -1,4 +1,4 @@
-﻿using CoffeeNChillExample.Services;
+﻿using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -7,16 +7,19 @@ using System.Collections.Generic;
 using System.Net;
 using System.Text;
 
-
-namespace CoffeeNChillExample.Functions
+namespace CoffeeNChill.Functions
 {
-    public class GetMenuItemsByCategory //(IIE,2026)
+    public class GetMenuItemsByCategory
     {
         private readonly ILogger<GetMenuItemsByCategory> _logger;
+        private readonly TableService _tableService;
 
-        public GetMenuItemsByCategory(ILogger<GetMenuItemsByCategory> logger)
+        public GetMenuItemsByCategory(
+            ILogger<GetMenuItemsByCategory> logger,
+            TableService tableService)
         {
             _logger = logger;
+            _tableService = tableService;
         }
 
         [Function("GetMenuItemsByCategory")]
@@ -24,7 +27,7 @@ namespace CoffeeNChillExample.Functions
             [HttpTrigger(
                 AuthorizationLevel.Anonymous,
                 "get",
-                Route = "menu/category/{category}")]
+                Route = "menu/category/{category}")]    // Microsoft, 2026c
             HttpRequestData req,
             string category)
         {
@@ -45,13 +48,8 @@ namespace CoffeeNChillExample.Functions
 
             try
             {
-                TableService tableService =
-                    new TableService(
-                        "UseDevelopmentStorage=true",
-                        "Menuitems");
-
                 var menuItems =
-                    await tableService.GetEntitiesByCategoryAsync(category); //(IIE,2026)
+                    await _tableService.GetEntitiesByCategoryAsync(category);
 
                 var response = req.CreateResponse(HttpStatusCode.OK);
 
@@ -75,10 +73,3 @@ namespace CoffeeNChillExample.Functions
         }
     }
 }
-//FULL REFERENCE LIST
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 1. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622998  
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 2. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622999 
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 3. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5623000
-
-
-

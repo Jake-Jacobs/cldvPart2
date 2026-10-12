@@ -1,36 +1,34 @@
-﻿using Azure.Storage.Queues;
-using System;
-using System.Collections.Generic;
-using System.Text;
+using Azure.Storage.Queues;
 using System.Text.Json;
-using System.Threading.Tasks;
 
-namespace CoffeeNChillExample.Services
+namespace CoffeeNChill.Services
 {
     public class QueueService
     {
         private readonly QueueClient _queueClient;
 
-        public QueueService(string connectionString, string queueName)
+        private QueueService(QueueClient queueClient)
         {
-            QueueClientOptions options = new QueueClientOptions
-            {
-                MessageEncoding = QueueMessageEncoding.Base64
-            };
-
-            _queueClient = new QueueClient(
-                connectionString, queueName, options);
-
-            _queueClient.CreateIfNotExists();
+            _queueClient = queueClient;
         }
 
-        public async Task SendMessageAsync<T>(T message)
+        public static async Task<QueueService> CreateAsync(string connectionString, string queueName)
         {
-            string jsonMessage = JsonSerializer.Serialize(message);
+            var queueClient = new QueueClient(connectionString, queueName, new QueueClientOptions
+            {
+                MessageEncoding = QueueMessageEncoding.Base64
+            });
 
-            await _queueClient.SendMessageAsync(jsonMessage);
+            await queueClient.CreateIfNotExistsAsync();
+
+            return new QueueService(queueClient);
+        }
+
+        public async Task EnqueueMessageAsync<T>(T payload)
+        {
+            string message = JsonSerializer.Serialize(payload);
+
+            await _queueClient.SendMessageAsync(message);
         }
     }
 }
-
-

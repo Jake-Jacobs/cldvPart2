@@ -1,4 +1,4 @@
-﻿using CoffeeNChillExample.Services;
+﻿using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -7,17 +7,19 @@ using System.Collections.Generic;
 using System.Net;
 using System.Text;
 
-
-namespace CoffeeNChillExample.Functions //(IIE,2026)
+namespace CoffeeNChill.Functions
 {
     public class DownloadStaffDocument
     {
         private readonly ILogger<DownloadStaffDocument> _logger;
+        private readonly BlobService _blobService;
 
         public DownloadStaffDocument(
-            ILogger<DownloadStaffDocument> logger)
+            ILogger<DownloadStaffDocument> logger,
+            BlobService blobService)
         {
             _logger = logger;
+            _blobService = blobService;
         }
 
         [Function("DownloadStaffDocument")]
@@ -25,7 +27,7 @@ namespace CoffeeNChillExample.Functions //(IIE,2026)
             [HttpTrigger(
                 AuthorizationLevel.Anonymous,
                 "get",
-                Route = "documents/download/{fileName}")]
+                Route = "documents/download/{fileName}")]   // Microsoft, 2026c
             HttpRequestData req,
             string fileName)
         {
@@ -42,13 +44,8 @@ namespace CoffeeNChillExample.Functions //(IIE,2026)
                     return errorResponse;
                 }
 
-                FileService fileService = //(IIE,2026)
-                    new FileService(
-                        "UseDevelopmentStorage=true",
-                        "staff-docs");
-
-                var fileStream =
-                    await fileService.DownloadFileAsync(fileName);
+                var (fileStream, contentType) =
+                    await _blobService.DownloadFileAsync(fileName);
 
                 if (fileStream == null)
                 {
@@ -66,9 +63,14 @@ namespace CoffeeNChillExample.Functions //(IIE,2026)
 
                 response.Headers.Add(
                     "Content-Type",
-                    "application/pdf");
+                    string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
 
-                await fileStream.CopyToAsync(response.Body);
+                response.Headers.Add(
+                    "Content-Disposition",
+                    $"attachment; filename=\"{fileName}\"");
+
+                await fileStream.CopyToAsync(response.Body);    // W3Schools, 2026a
+
 
                 return response;
             }
@@ -83,14 +85,8 @@ namespace CoffeeNChillExample.Functions //(IIE,2026)
                 await response.WriteStringAsync(
                     "An error occurred while downloading the document.");
 
-                return response;
+                return response;    // IIE, 2026
             }
         }
     }
 }
-//FULL REFERENCE LIST
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 1. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622998  
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 2. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622999 
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 3. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5623000
-
-

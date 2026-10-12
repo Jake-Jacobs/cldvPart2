@@ -1,95 +1,108 @@
-﻿using CoffeeNChillExample.Services;
+﻿using Azure;
+using CoffeeNChill.Services;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Net;
-using System.Text;
 
-
-namespace CoffeeNChillExample.Functions
+namespace CoffeeNChill.Functions
 {
-    public class UploadStaffDocument //(IIE,2026)
+    public class UploadStaffDocument
     {
-        private readonly ILogger<UploadStaffDocument> _logger;
+        private static readonly Dictionary<string, string> AllowedTypes =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                [".pdf"] = "application/pdf",
+                [".docx"] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                [".txt"] = "text/plain",
+                [".png"] = "image/png",
+                [".jpg"] = "image/jpeg",
+                [".jpeg"] = "image/jpeg"
+            };
 
-        public UploadStaffDocument(ILogger<UploadStaffDocument> logger)
+        private readonly ILogger<UploadStaffDocument> _logger;
+        private readonly BlobService _blobService;
+
+        public UploadStaffDocument(
+            ILogger<UploadStaffDocument> logger,
+            BlobService blobService)
         {
             _logger = logger;
+            _blobService = blobService;
         }
 
         [Function("UploadStaffDocument")]
-        public async Task<HttpResponseData> Run(
-            [HttpTrigger(
-                AuthorizationLevel.Anonymous,
-                "post",
-                Route = "documents/upload")]
-            HttpRequestData req)
+        public async Task<IActionResult> Run(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "documents/upload")]
+            HttpRequest req)
         {
-            try //(IIE,2026)
+            _logger.LogInformation("Uploading a staff document.");
+
+            try
             {
-                string fileName =
-                    req.Headers.GetValues("fileName").FirstOrDefault();
-
-                if (string.IsNullOrEmpty(fileName))
+                if (!req.HasFormContentType || req.Form.Files.Count == 0)   // Microsoft, 2026i
                 {
-                    var errorResponse =
-                        req.CreateResponse(HttpStatusCode.BadRequest);
-
-                    await errorResponse.WriteStringAsync(
-                        "Please provide a fileName header.");
-
-                    return errorResponse;
+                    return new BadRequestObjectResult(
+                        "Please attach a file using multipart/form-data with a 'file' key.");
                 }
 
-                if (!fileName.EndsWith(".pdf"))
+                IFormFile file = req.Form.Files[0];
+
+                if (file.Length == 0)
                 {
-                    var errorResponse =
-                        req.CreateResponse(HttpStatusCode.BadRequest);
-
-                    await errorResponse.WriteStringAsync(
-                        "Only PDF files are allowed.");
-
-                    return errorResponse;
+                    return new BadRequestObjectResult("The uploaded file is empty.");
                 }
 
-                FileService fileService =
-                    new FileService(
-                        "UseDevelopmentStorage=true",
-                        "staff-docs");
+                string fileName = Path.GetFileName(file.FileName);
+                string extension = Path.GetExtension(fileName);
 
-                await fileService.UploadFileAsync(
-                    req.Body,
-                    fileName);
+                if (!AllowedTypes.TryGetValue(extension, out string? expectedType) ||
+                    !string.Equals(file.ContentType, expectedType, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "Rejected upload '{fileName}' with content type '{contentType}'.",
+                        fileName,
+                        file.ContentType);
 
-                var response =
-                    req.CreateResponse(HttpStatusCode.OK);
+                    return new ObjectResult(
+                        "Unsupported file type. Allowed types: PDF, DOCX, TXT, PNG and JPG.")
+                    {
+                        StatusCode = StatusCodes.Status415UnsupportedMediaType
+                    };
+                }
 
-                await response.WriteStringAsync(
-                    "Staff document uploaded successfully.");
+                using (Stream fileStream = file.OpenReadStream())   // W3Schools, 2026a
+                {
+                    await _blobService.UploadFileAsync(
+                        fileStream,
+                        fileName,
+                        expectedType);
+                }
 
-                return response;
+                return new OkObjectResult(
+                    $"Staff document '{fileName}' uploaded successfully.");
             }
-            catch (Exception e) //(IIE,2026)
+            catch (RequestFailedException e) when (e.Status == StatusCodes.Status409Conflict)
+            {
+                _logger.LogWarning(e, "A staff document with that name already exists.");
+
+                return new ObjectResult(
+                    "A document with that file name already exists.")
+                {
+                    StatusCode = StatusCodes.Status409Conflict
+                };
+            }
+            catch (Exception e)
             {
                 _logger.LogError(e, "Error uploading staff document.");
 
-                var response =
-                    req.CreateResponse(
-                        HttpStatusCode.InternalServerError);
-
-                await response.WriteStringAsync(
-                    "An error occurred while uploading the document.");
-
-                return response;
+                return new ObjectResult(
+                    "An error occurred while uploading the document.")
+                {
+                    StatusCode = StatusCodes.Status500InternalServerError
+                };  // IIE, 2026
             }
         }
     }
 }
-//FULL REFERENCE LIST
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 1. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622998  
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 2. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622999 
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 3. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5623000
-
-

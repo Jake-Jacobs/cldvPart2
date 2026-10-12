@@ -1,4 +1,4 @@
-﻿using CoffeeNChillExample.Services;
+﻿using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -7,17 +7,20 @@ using System.Collections.Generic;
 using System.Net;
 using System.Text;
 
-
-namespace CoffeeNChillExample.Functions
+namespace CoffeeNChill.Functions
 {
 
-    public class ListStaffDocuments //(IIE,2026)
+    public class ListStaffDocuments
     {
         private readonly ILogger<ListStaffDocuments> _logger;
+        private readonly BlobService _blobService;
 
-        public ListStaffDocuments(ILogger<ListStaffDocuments> logger)
+        public ListStaffDocuments(
+            ILogger<ListStaffDocuments> logger,
+            BlobService blobService)
         {
             _logger = logger;
+            _blobService = blobService;
         }
 
         [Function("ListStaffDocuments")]
@@ -25,18 +28,13 @@ namespace CoffeeNChillExample.Functions
             [HttpTrigger(
                 AuthorizationLevel.Anonymous,
                 "get",
-                Route = "documents")]
+                Route = "documents")]   // Microsoft, 2026c
             HttpRequestData req)
         {
             try
             {
-                FileService fileService =
-                    new FileService(
-                        "UseDevelopmentStorage=true",
-                        "staff-docs");
-
                 var documents =
-                    await fileService.GetAllFilesAsync();
+                    await _blobService.GetAllFilesAsync();
 
                 var response =
                     req.CreateResponse(HttpStatusCode.OK);
@@ -47,7 +45,7 @@ namespace CoffeeNChillExample.Functions
             }
             catch (Exception e)
             {
-                _logger.LogError(e, "Error listing staff documents."); //(IIE,2026)
+                _logger.LogError(e, "Error listing staff documents.");
 
                 var response =
                     req.CreateResponse(
@@ -56,13 +54,8 @@ namespace CoffeeNChillExample.Functions
                 await response.WriteStringAsync(
                     "An error occurred while listing documents.");
 
-                return response;
+                return response;    // IIE, 2026
             }
         }
     }
 }
-//FULL REFERENCE LIST
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 1. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622998  
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 2. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622999 
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 3. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5623000
-

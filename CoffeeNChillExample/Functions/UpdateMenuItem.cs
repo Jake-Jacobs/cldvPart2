@@ -1,5 +1,5 @@
-﻿using CoffeeNChillExample.Models;
-using CoffeeNChillExample.Services;
+﻿using CoffeeNChill.Models;
+using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -9,16 +9,19 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 
-
-namespace CoffeeNChillExample.Functions 
+namespace CoffeeNChill.Functions
 {
-    public class UpdateMenuItem //(IIE,2026)
+    public class UpdateMenuItem
     {
         private readonly ILogger<UpdateMenuItem> _logger;
+        private readonly TableService _tableService;
 
-        public UpdateMenuItem(ILogger<UpdateMenuItem> logger)
+        public UpdateMenuItem(
+            ILogger<UpdateMenuItem> logger,
+            TableService tableService)
         {
             _logger = logger;
+            _tableService = tableService;
         }
 
         [Function("UpdateMenuItem")]
@@ -26,7 +29,7 @@ namespace CoffeeNChillExample.Functions
             [HttpTrigger(
                 AuthorizationLevel.Anonymous,
                 "put",
-                Route = "menu/{category}/{id}")]
+                Route = "menu/{category}/{id}")]    // Microsoft, 2026c
             HttpRequestData req,
             string category,
             string id)
@@ -70,15 +73,10 @@ namespace CoffeeNChillExample.Functions
                     return errorResponse;
                 }
 
-                TableService tableService =
-                    new TableService(
-                        "UseDevelopmentStorage=true",
-                        "Menuitems");
-
                 MenuItem? existingItem =
-                    await tableService.GetEntityAsync(category, id);
+                    await _tableService.GetEntityAsync(category, id);
 
-                if (existingItem == null) //(IIE,2026)
+                if (existingItem == null)
                 {
                     var errorResponse =
                         req.CreateResponse(HttpStatusCode.NotFound);
@@ -93,7 +91,7 @@ namespace CoffeeNChillExample.Functions
                 menuItem.RowKey = id;
                 menuItem.ETag = existingItem.ETag;
 
-                await tableService.UpdateEntityAsync(menuItem);
+                await _tableService.UpdateEntityAsync(menuItem);
 
                 var response =
                     req.CreateResponse(HttpStatusCode.OK);
@@ -113,15 +111,8 @@ namespace CoffeeNChillExample.Functions
                 await response.WriteStringAsync(
                     "An error occurred while updating the menu item.");
 
-                return response;
+                return response;    // IIE, 2026
             }
         }
     }
 }
-//FULL REFERENCE LIST
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 1. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622998  
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 2. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622999 
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 3. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5623000
-
-
-

@@ -1,4 +1,4 @@
-﻿using CoffeeNChillExample.Services;
+﻿using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -7,16 +7,19 @@ using System.Collections.Generic;
 using System.Net;
 using System.Text;
 
-
-namespace CoffeeNChillExample.Functions
+namespace CoffeeNChill.Functions
 {
-    public class DeleteMenuItem //(IIE,2026)
+    public class DeleteMenuItem
     {
         private readonly ILogger<DeleteMenuItem> _logger;
+        private readonly TableService _tableService;
 
-        public DeleteMenuItem(ILogger<DeleteMenuItem> logger)
+        public DeleteMenuItem(
+            ILogger<DeleteMenuItem> logger,
+            TableService tableService)
         {
             _logger = logger;
+            _tableService = tableService;
         }
 
         [Function("DeleteMenuItem")]
@@ -24,7 +27,7 @@ namespace CoffeeNChillExample.Functions
             [HttpTrigger(
                 AuthorizationLevel.Anonymous,
                 "delete",
-                Route = "menu/{category}/{id}")]
+                Route = "menu/{category}/{id}")]    // Microsoft, 2026c
             HttpRequestData req,
             string category,
             string id)
@@ -43,15 +46,10 @@ namespace CoffeeNChillExample.Functions
                     return errorResponse;
                 }
 
-                TableService tableService =
-                    new TableService(
-                        "UseDevelopmentStorage=true",
-                        "Menuitems");
-
                 var existingItem =
-                    await tableService.GetEntityAsync(category, id);
+                    await _tableService.GetEntityAsync(category, id);
 
-                if (existingItem == null) //(IIE,2026)
+                if (existingItem == null)
                 {
                     var errorResponse =
                         req.CreateResponse(HttpStatusCode.NotFound);
@@ -62,7 +60,7 @@ namespace CoffeeNChillExample.Functions
                     return errorResponse;
                 }
 
-                await tableService.DeleteEntityAsync(category, id);
+                await _tableService.DeleteEntityAsync(category, id);
 
                 var response =
                     req.CreateResponse(HttpStatusCode.OK);
@@ -88,9 +86,3 @@ namespace CoffeeNChillExample.Functions
         }
     }
 }
-//FULL REFERENCE LIST
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 1. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622998  
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 2. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622999 
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 3. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5623000
-
-

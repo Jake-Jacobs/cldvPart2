@@ -1,16 +1,21 @@
+using CoffeeNChill.Services;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-var builder = FunctionsApplication.CreateBuilder(args); //(IIE,2026)
+var builder = FunctionsApplication.CreateBuilder(args);
 
 builder.ConfigureFunctionsWebApplication();
 
+string connectionString = builder.Configuration["AzureWebJobsStorage"] ?? "UseDevelopmentStorage=true";
+
+builder.Services.AddSingleton(await TableService.CreateAsync(connectionString, "MenuItems"));
+builder.Services.AddSingleton(await BlobService.CreateAsync(connectionString, "staff-docs"));
+builder.Services.AddSingleton(await QueueService.CreateAsync(connectionString, "order-processing-queue"));
+builder.Services.AddSingleton(await OrderService.CreateAsync(connectionString, "Orders"));
+builder.Services.AddSingleton(await FailedOrderService.CreateAsync(connectionString, "FailedOrders"));
+
 var app = builder.Build();
 
-app.Run();
-//FULL REFERENCE LIST
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 1. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622998  
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 2. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5622999 
-//IIE, 2026. Cloud Development B: Lecture notes distributed in CLDV6212 Learning Unit 3. https://mystudies.iie.edu.za/d2l/le/lessons/81852/units/5623000
+app.Run(); 
